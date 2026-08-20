@@ -1,8 +1,8 @@
-# Innoviti Solutions
-Building Esports for Devs
+# Pragmys
+Building the future of recruiting
 
-Download SynTx for mobile [here](https://innoviti.me/play). 
+Checkout Pragmys [here](https://pragmys.com). 
 
 ## Disclaimer
 
-SynTx is developed by Team Innoviti / Innoviti Solutions. Innoviti Solutions is an independent software development entity and is not associated with, or a subsidiary of, any other corporation.
+Pragmys is an independent software development entity and is not associated with, or a subsidiary of, any other corporation.
