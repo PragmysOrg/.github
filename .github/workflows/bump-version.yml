@@ -43,6 +43,8 @@ jobs:
     steps:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the guard reads the version files at the remote's previous state
       - name: Check out the bump script
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,12 +54,26 @@ jobs:
         env:
           FILES: ${{ inputs.files }}
           DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          BASE_REF: ${{ github.base_ref }}
         run: |
           set -eu
           flag="--dry-run"
           if [ "$DRY_RUN" = "false" ]; then flag=""; fi
+          # The "already ahead" guard compares with the remote's state before this change:
+          # the parent of a push, the base branch of a PR, origin/main otherwise. If the
+          # change already raised the version it is NOT bumped again.
+          against=""
+          case "$EVENT" in
+            push) if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then against="$BEFORE"; fi ;;
+            pull_request|pull_request_target) against="origin/$BASE_REF" ;;
+            *) against="origin/main" ;;
+          esac
+          guard=""
+          if [ -n "$against" ]; then guard="--against $against"; fi
           # shellcheck disable=SC2086
-          node .bump-tools/scripts/bump-version.mjs $flag $FILES | tee "$RUNNER_TEMP/plan.txt"
+          node .bump-tools/scripts/bump-version.mjs $flag $guard $FILES | tee "$RUNNER_TEMP/plan.txt"
           {
             if [ -n "$flag" ]; then echo "### Version bump: dry run (nothing changed)"; else echo "### Version bump: applied"; fi
             echo '```'
@@ -66,12 +82,13 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Commit the bump
         # Not used by any caller yet: needs dry_run false AND contents: write from the caller.
-        if: ${{ inputs.dry_run == false }}
+        if: ${{ inputs.dry_run == false }} # and the plan says "->" with a changed version; see the guard in the script
         env:
           FILES: ${{ inputs.files }}
         run: |
           set -eu
           rm -rf .bump-tools
+          if grep -qE 'not bumped' "$RUNNER_TEMP/plan.txt"; then echo "guard skipped the bump; nothing to commit"; exit 0; fi
           next=$(sed -n '1s/.*-> \([0-9][0-9.]*\).*/\1/p' "$RUNNER_TEMP/plan.txt")
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"

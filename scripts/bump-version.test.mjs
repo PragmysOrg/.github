@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { bump, readVersion, run } from './bump-version.mjs';
+import { bump, compare, readVersion, run, runGuarded } from './bump-version.mjs';
 
 const mem = (files) => ({
   read: (f) => files[f],
@@ -65,4 +65,54 @@ test('files that disagree are refused and nothing is written', () => {
 
 test('no files is an error', () => {
   assert.throws(() => run([]), /no version files/);
+});
+
+const guarded = (local, base, opts = {}) => {
+  const files = { 'package.json': `{"version": "${local}"}`, 'manifest.json': `{"version": "${local}"}` };
+  const baseFiles = base === null ? {} : { 'package.json': `{"version": "${base}"}`, 'manifest.json': `{"version": "${base}"}` };
+  return runGuarded(['package.json', 'manifest.json'], {
+    against: 'origin/main', dryRun: false, ...mem(files), readBase: (f) => baseFiles[f] ?? null, ...opts,
+  });
+};
+
+test('compare orders versions numerically, not as text', () => {
+  assert.equal(compare('1.2.10', '1.2.9'), 1);
+  assert.equal(compare('1.10.0', '1.9.9'), 1);
+  assert.equal(compare('1.1.5', '1.1.5'), 0);
+  assert.equal(compare('0.0.5', '0.1.0'), -1);
+});
+
+test('guard: same version as the remote -> bump', () => {
+  assert.deepEqual(guarded('1.1.5', '1.1.5'), { action: 'bump', plan: [
+    { file: 'package.json', from: '1.1.5', to: '1.1.6' }, { file: 'manifest.json', from: '1.1.5', to: '1.1.6' }] });
+});
+
+test('guard: already ahead of the remote (manually bumped) -> do not bump again, write nothing', () => {
+  const files = { 'package.json': '{"version": "1.1.6"}', 'manifest.json': '{"version": "1.1.6"}' };
+  const before = JSON.stringify(files);
+  const r = runGuarded(['package.json', 'manifest.json'], { against: 'origin/main', dryRun: false, ...mem(files), readBase: () => '{"version": "1.1.5"}' });
+  assert.equal(r.action, 'skip-ahead');
+  assert.deepEqual(r.plan.map((p) => [p.from, p.to]), [['1.1.6', '1.1.6'], ['1.1.6', '1.1.6']]);
+  assert.equal(JSON.stringify(files), before);
+});
+
+test('guard: ahead by more than one is also left alone', () => {
+  assert.equal(guarded('1.1.9', '1.1.5').action, 'skip-ahead');
+  assert.equal(guarded('1.2.0', '1.1.9').action, 'skip-ahead');
+});
+
+test('guard: behind the remote is refused (a bump would collide)', () => {
+  assert.throws(() => guarded('1.1.4', '1.1.5'), /behind origin\/main/);
+});
+
+test('guard: a file that is new at the ref (first VERSION file) is not bumped', () => {
+  const r = guarded('1.2.0', null);
+  assert.equal(r.action, 'skip-new');
+  assert.deepEqual(r.plan.map((p) => p.to), ['1.2.0', '1.2.0']);
+});
+
+test('guard: without --against it behaves as before', () => {
+  const files = { 'package.json': '{"version": "1.1.5"}' };
+  assert.equal(runGuarded(['package.json'], { dryRun: false, ...mem(files) }).action, 'bump');
+  assert.equal(files['package.json'], '{"version": "1.1.6"}');
 });

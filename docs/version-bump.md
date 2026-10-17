@@ -25,6 +25,22 @@ jobs:
 `files` are JSON files with a top-level `"version"` or a plain `VERSION` file. If they
 disagree the job fails and nothing is changed.
 
+## The "already ahead" guard
+
+The bump never raises a version that something else already raised. Before bumping, the
+script compares the version files in the checkout with the same files at the remote's
+previous state (`--against <ref>`: the parent commit of a push, the base branch of a PR):
+
+| working tree vs remote | result |
+|---|---|
+| equal | bump (+1 on the third number) |
+| **ahead** (someone bumped by hand) | **no bump**, reported as "already ahead" |
+| behind (stale checkout) | refused, nothing written |
+| file new at the remote (first `VERSION` file) | no bump, reported as "new" |
+
+Registry checks stay with each product's own release gate (Compass publishes only a version
+npm does not have yet; the extension skips a version whose tag already exists).
+
 ## Dry run vs applying
 
 `dry_run: true` (default) prints `file: old -> new` in the job summary and changes
@@ -37,6 +53,6 @@ bump (Compass publishes to npm and the extension submits to the stores on every 
 ## Run it locally
 
 ```bash
-node scripts/bump-version.mjs --dry-run package.json manifest.json
+node scripts/bump-version.mjs --dry-run --against origin/main package.json manifest.json
 node --test scripts/bump-version.test.mjs
 ```
