@@ -1,0 +1,81 @@
+# Reusable workflow: adds 1 to the third number (x.y.Z) of the version files a repo lists.
+#
+# DRY RUN BY DEFAULT. With dry_run true (the default, and the only mode any caller uses
+# today) it prints what it would change in the job summary and writes, commits, tags and
+# pushes nothing. It never calls a release workflow and has no access to the extension
+# stores or npm: it only reads the caller repository and runs a script.
+#
+# The apply step exists so the real mode is built and reviewable, but it needs
+# `contents: write`, which this workflow does not grant itself; a caller must opt in
+# explicitly and set dry_run to false. Pushes made with GITHUB_TOKEN do not start other
+# workflows, so the release workflows are not triggered by the bump commit (the release
+# ordering is decided per repo before switching on; see PragmysOrg/pragmys-backend#162).
+name: bump-version
+
+on:
+  workflow_call:
+    inputs:
+      files:
+        description: Space-separated version files (JSON "version" key, or a plain VERSION file)
+        type: string
+        required: true
+      dry_run:
+        description: Print the plan only; change nothing
+        type: boolean
+        default: true
+  workflow_dispatch:
+    inputs:
+      files:
+        description: Space-separated version files
+        type: string
+        required: true
+      dry_run:
+        description: Print the plan only; change nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the bump script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: PragmysOrg/.github
+          path: .bump-tools
+      - name: Plan the bump
+        env:
+          FILES: ${{ inputs.files }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -eu
+          flag="--dry-run"
+          if [ "$DRY_RUN" = "false" ]; then flag=""; fi
+          # shellcheck disable=SC2086
+          node .bump-tools/scripts/bump-version.mjs $flag $FILES | tee "$RUNNER_TEMP/plan.txt"
+          {
+            if [ -n "$flag" ]; then echo "### Version bump: dry run (nothing changed)"; else echo "### Version bump: applied"; fi
+            echo '```'
+            cat "$RUNNER_TEMP/plan.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Commit the bump
+        # Not used by any caller yet: needs dry_run false AND contents: write from the caller.
+        if: ${{ inputs.dry_run == false }}
+        env:
+          FILES: ${{ inputs.files }}
+        run: |
+          set -eu
+          rm -rf .bump-tools
+          next=$(sed -n '1s/.*-> \([0-9][0-9.]*\).*/\1/p' "$RUNNER_TEMP/plan.txt")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # shellcheck disable=SC2086
+          git add $FILES
+          git commit -m "chore: bump version to ${next} [skip version]"
+          git push

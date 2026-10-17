@@ -1,0 +1,29 @@
+# Unit-tests the bump script and dry-runs the reusable workflow against fixtures that
+# mirror each product's version files. Dry run only: nothing is written or released.
+name: test-bump-script
+on:
+  pull_request:
+    paths: ['scripts/**', '.github/workflows/bump-version.yml', '.github/workflows/test-bump-script.yml', 'fixtures/**']
+  push:
+    branches: [main]
+    paths: ['scripts/**', '.github/workflows/bump-version.yml', 'fixtures/**']
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: node --test scripts/bump-version.test.mjs
+  dry-run-extension-shape:
+    # package.json + manifest.json must be bumped together (the extension's shape).
+    uses: ./.github/workflows/bump-version.yml
+    with:
+      files: fixtures/extension/package.json fixtures/extension/manifest.json
+      dry_run: true
+  dry-run-service-shape:
+    # A new VERSION file (backend, frontend, Nexus).
+    uses: ./.github/workflows/bump-version.yml
+    with:
+      files: fixtures/service/VERSION
+      dry_run: true
